@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/barnybug/go-cast"
 	"github.com/barnybug/go-cast/controllers"
@@ -33,19 +35,54 @@ func NewClient(ctx context.Context, host string, port int) (*Notifier, error) {
 	return n, nil
 }
 
-// Notify sends a message to google home
-func (n *Notifier) Notify(text string, language string) error {
-	baseURL := "https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=%s&client=tw-ob"
-	u := fmt.Sprintf(baseURL, url.QueryEscape(text), url.QueryEscape(language))
-	return n.Play(u)
+// Set volume
+func (n *Notifier) Volume(vol string) error {
+	receiver := n.client.Receiver()
+	level, _ := strconv.ParseFloat(vol, 64)
+	muted := false
+	volume := controllers.Volume{Level: &level, Muted: &muted}
+	_, err := receiver.SetVolume(n.ctx, &volume)
+	return err
 }
 
-//Play sound via URL
-func (n *Notifier) Play(url string) error {
+// Wait for play to become ready
+func (n *Notifier) Wait(timeout int) error {
 	media, err := n.client.Media(n.ctx)
 	if err != nil {
 		return err
 	}
+	wait := 0
+	for {
+		response, err := media.GetStatus(n.ctx)
+		if err != nil {
+			return err
+		}
+		time.Sleep(1 * time.Second)
+		if len(response.Status) < 1 {
+			break
+		}
+		wait += 1
+		if wait > timeout {
+			break
+		}
+	}
+	return nil
+}
+
+// Notify sends a message to google home
+func (n *Notifier) Notify(text string, language string, waitTimeout int) error {
+	baseURL := "https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=%s&client=tw-ob"
+	u := fmt.Sprintf(baseURL, url.QueryEscape(text), url.QueryEscape(language))
+	return n.Play(u, waitTimeout)
+}
+
+//Play sound via URL
+func (n *Notifier) Play(url string, waitTimeout int) error {
+	media, err := n.client.Media(n.ctx)
+	if err != nil {
+		return err
+	}
+	n.Wait(waitTimeout)
 	contentType := "audio/mpeg"
 	item := controllers.MediaItem{
 		ContentId:   url,
@@ -53,6 +90,7 @@ func (n *Notifier) Play(url string) error {
 		ContentType: contentType,
 	}
 	_, err = media.LoadMedia(n.ctx, item, 0, true, map[string]interface{}{})
+	n.Wait(waitTimeout)
 	return err
 }
 
